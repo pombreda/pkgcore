@@ -211,6 +211,7 @@ pkgcore_ebd_process_ebuild_phases()
 	# note that this is entirely subshelled; as such exit is used rather than returns
 	(
 	declare -r PKGCORE_QA_SUPPRESSED=false
+	local PKGCORE_SUPPRESS_OUTPUT=false
 	local phases="$@"
 	local is_depends=true
 	if [[ ${phases/depend} == $phases ]]; then
@@ -262,6 +263,8 @@ pkgcore_ebd_process_ebuild_phases()
 			;;
 		logging*)
 			PORTAGE_LOGFILE="${line#logging }"
+			addwrite "$(readlink -f "$PORTAGE_LOGFILE")"
+			(umask 0002; touch "${PORTAGE_LOGFILE}" )
 			ebd_write_line "logging_ack"
 			;;
 		set_sandbox_state*)
@@ -272,6 +275,10 @@ pkgcore_ebd_process_ebuild_phases()
 				export SANDBOX_VERBOSE="no"
 			fi
 			;;
+		start_processing_quiet)
+			PKGCORE_SUPPRESS_OUTPUT=true
+			# fall through into the next bit
+			;&
 		start_processing)
 			if ${is_depends} && [[ -n ${PKGCORE_METADATA_PATH} ]]; then
 				export PATH="${PKGCORE_METADATA_PATH}"
@@ -287,8 +294,6 @@ pkgcore_ebd_process_ebuild_phases()
 		exit $cont
 	fi
 
-	[[ -n $PORTAGE_LOGFILE ]] && addwrite "$(readlink -f "$PORTAGE_LOGFILE")"
-
 	if [[ -z $RC_NOCOLOR ]]; then
 		set_colors
 	fi
@@ -302,11 +307,12 @@ pkgcore_ebd_process_ebuild_phases()
 	umask 0022
 	if [[ -z "$PORTAGE_LOGFILE" ]]; then
 		execute_phases ${phases}
-		ret=$?
+	elif ${PKGCORE_SUPPRESS_OUTPUT}; then
+		execute_phases ${phases} &> "${PORTAGE_LOGFILE}"
 	else
-		execute_phases ${phases} &> >(umask 0002; tee -i -a "${PORTAGE_LOGFILE}")
-		ret=$?
+		execute_phases ${phases} &> >(tee -i -a "${PORTAGE_LOGFILE}")
 	fi
+	ret=$?
 
 	if [[ $ret != 0 ]]; then
 		ebd_process_sandbox_results

@@ -265,7 +265,6 @@ class ebd(object):
             if (os.stat(self.env[k]).st_mode & 02000):
                 logger.warn("%s ( %s ) is setgid" % (self.env[k], k))
 
-
     def _generic_phase(self, phase, userpriv, sandbox, fakeroot,
                        extra_handlers={}, failure_allowed=False,
                        suppress_bashrc=False):
@@ -428,7 +427,7 @@ def run_generic_phase(pkg, phase, env, userpriv, sandbox, fakeroot,
     sys.stderr.flush()
     try:
         if not ebd.run_phase(phase, env, env.get('T'), sandbox=sandbox,
-                       logging=logging,
+                       logfile=logging,
                        additional_commands=extra_handlers):
             if not failure_allowed:
                 raise format.GenericBuildError(

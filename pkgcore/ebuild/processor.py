@@ -303,7 +303,7 @@ class EbuildProcessor(object):
         # locking isn't used much, but w/ threading this will matter
         self.unlock()
 
-    def run_phase(self, phase, env, tmpdir, logging=None,
+    def run_phase(self, phase, env, tmpdir, logfile=None,
         additional_commands=None, sandbox=True):
         """
         Utility function, to initialize the processor for a phase.
@@ -326,11 +326,34 @@ class EbuildProcessor(object):
             return False
         if sandbox:
             self.set_sandbox_state(sandbox)
-        if logging:
-            if not self.set_logfile(logging):
-                return False
-        self.write("start_processing")
-        return self.generic_handler(additional_commands=additional_commands)
+
+        if not logfile:
+            logfile = osutils.pjoin(tmpdir, 'build.log')
+
+        if not self.set_logfile(logfile):
+            return False
+
+        tail_pid = pkgcore.spawn.spawn(['tail', '-fs1', '-c0', logfile],
+            fd_pipes={1:1}, returnpid=True)[0]
+
+        try:
+            self.write("start_processing_quiet")
+
+            return self.generic_handler(additional_commands=additional_commands,
+                logfile=logfile)
+        finally:
+            try:
+                os.kill(tail_pid, signal.SIGKILL)
+            except OSError, oe:
+                # if the pid doesn't exist, ignore; puke otherwise
+                if oe.errno != errno.ESRCH:
+                    raise
+
+            # reap the dead kiddie.
+            try:
+                os.waitpid(tail_pid, 0)
+            except EnvironmentError:
+                pass
 
     def sandboxed(self):
         """is this instance sandboxed?"""
@@ -623,11 +646,9 @@ class EbuildProcessor(object):
                 (len(data), data), append_newline=False)
         return self.expect("env_received", async=async, flush=True)
 
-    def set_logfile(self, logfile=''):
+    def set_logfile(self, logfile):
         """
         Set the logfile (location to log to).
-
-        Relevant only when the daemon is sandbox'd,
 
         :param logfile: filepath to log to
         """
@@ -702,7 +723,7 @@ class EbuildProcessor(object):
 
     # this basically handles all hijacks from the daemon, whether
     # confcache or portageq.
-    def generic_handler(self, additional_commands=None):
+    def generic_handler(self, additional_commands=None, logfile=None):
         """
         internal event handler responding to the running processor's requests.
 
