@@ -41,6 +41,8 @@ class base(object):
     def _get_observer(self, observer=None):
         if observer is not None:
             return observer
+        elif self.observer is not None:
+            return self.observer
         return _observer.null_output()
 
     @klass.cached_property

@@ -46,7 +46,7 @@ demandload(globals(),
 class ebd(object):
 
     def __init__(self, pkg, initial_env=None, env_data_source=None,
-                 features=None, observer=None, clean=True, tmp_offset=None,
+                 features=None, clean=True, tmp_offset=None,
                  use_override=None, allow_fetching=False):
         """
         :param pkg:
@@ -61,7 +61,6 @@ class ebd(object):
             will be broken down at some point
         """
 
-
         if use_override is not None:
             use = use_override
         else:
@@ -69,8 +68,6 @@ class ebd(object):
 
         self.allow_fetching = allow_fetching
 
-        if not hasattr(self, "observer"):
-            self.observer = observer
         if pkg.eapi not in eapi_capable:
             raise TypeError(
                 "pkg isn't of a supported eapi!, %i not in %s for %s" % (
@@ -287,7 +284,7 @@ class ebd(object):
         return run_generic_phase(self.pkg, phase, self.env,
             userpriv, sandbox, fakeroot,
             extra_handlers=extra_handlers, failure_allowed=failure_allowed,
-            logging=self.logging)
+            logging=self.logging, observer=self.observer)
 
     def _request_bashrcs(self, ebd, a):
         if a is not None:
@@ -400,7 +397,7 @@ class setup_mixin(object):
 
 
 def run_generic_phase(pkg, phase, env, userpriv, sandbox, fakeroot,
-    extra_handlers=None, failure_allowed=False, logging=None):
+    extra_handlers=None, failure_allowed=False, logging=None, observer=None):
     """
     :param phase: phase to execute
     :param userpriv: will we drop to
@@ -426,9 +423,10 @@ def run_generic_phase(pkg, phase, env, userpriv, sandbox, fakeroot,
     sys.stdout.flush()
     sys.stderr.flush()
     try:
-        if not ebd.run_phase(phase, env, env.get('T'), sandbox=sandbox,
-                       logfile=logging,
-                       additional_commands=extra_handlers):
+        if not ebd.run_phase(phase, env, env.get('T'), observer,
+            sandbox=sandbox, logfile=logging,
+            additional_commands=extra_handlers):
+
             if not failure_allowed:
                 raise format.GenericBuildError(
                     phase + ": Failed building (False/0 return from handler)")
@@ -454,7 +452,7 @@ class install_op(ebd, format.install):
 
     def __init__(self, domain, pkg, observer):
         format.install.__init__(self, domain, pkg, observer)
-        ebd.__init__(self, pkg, observer=observer, initial_env=domain.settings,
+        ebd.__init__(self, pkg, initial_env=domain.settings,
             env_data_source=pkg.environment, clean=False)
 
     preinst = pretty_docs(
@@ -479,7 +477,7 @@ class uninstall_op(ebd, format.uninstall):
 
     def __init__(self, domain, pkg, observer):
         format.uninstall.__init__(self, domain, pkg, observer)
-        ebd.__init__(self, pkg, observer=observer, initial_env=domain.settings,
+        ebd.__init__(self, pkg, initial_env=domain.settings,
             env_data_source=pkg.environment, clean=False,
             tmp_offset="unmerge")
 
@@ -834,7 +832,7 @@ class binpkg_localize(ebd, setup_mixin, format.build):
     _built_class = ebuild_built.package
 
     def __init__(self, domain, pkg, **kwargs):
-        format.build.__init__(self, domain, pkg, {}, observer=kwargs.get("observer",None))
+        format.build.__init__(self, domain, pkg, {}, observer=kwargs.pop("observer",None))
         ebd.__init__(self, pkg, **kwargs)
         if self.eapi_obj.options.has_merge_type:
             self.env["MERGE_TYPE"] = "binpkg"
@@ -867,7 +865,7 @@ class ebuild_mixin(object):
             logger.debug("running ebuild pkg_pretend sanity check for %s", pkg)
             start = time.time()
             ret = run_generic_phase(pkg, "pretend", env, True, True, False,
-                extra_handlers=commands)
+                extra_handlers=commands, observer=self.observer)
             logger.debug("pkg_pretend sanity check for %s took %2.2f seconds",
                 pkg, time.time() - start)
             return ret
@@ -892,13 +890,16 @@ class src_operations(ebuild_mixin, format.build_operations):
         return buildable(self.domain, self.pkg, verified_files,
             self._eclass_cache,
             use_override=self._use_override,
-            clean=clean, allow_fetching=allow_fetching)
+            clean=clean, allow_fetching=allow_fetching,
+            observer=observer)
 
 
 class misc_operations(ebd):
 
     def __init__(self, domain, *args, **kwds):
         self.domain = domain
+        # XXX needs fixing for observer.
+        self.observer = kwds.pop("observer", None)
         ebd.__init__(self, *args, **kwds)
 
     def configure(self, observer=None):

@@ -51,6 +51,7 @@ from snakeoil.demandload import demandload
 demandload(globals(),
     'pkgcore.log:logger',
     'snakeoil:osutils,fileutils',
+    'pkgcore.operations.observer:phase_observer',
 )
 
 import traceback
@@ -190,8 +191,6 @@ class InitializationError(Exception):
     pass
 
 
-
-
 class EbuildProcessor(object):
 
     """abstraction of a running ebuild.sh instance.
@@ -303,7 +302,7 @@ class EbuildProcessor(object):
         # locking isn't used much, but w/ threading this will matter
         self.unlock()
 
-    def run_phase(self, phase, env, tmpdir, logfile=None,
+    def run_phase(self, phase, env, tmpdir, observer, logfile=None,
         additional_commands=None, sandbox=True):
         """
         Utility function, to initialize the processor for a phase.
@@ -327,33 +326,27 @@ class EbuildProcessor(object):
         if sandbox:
             self.set_sandbox_state(sandbox)
 
-        if not logfile:
+        if not logfile and tmpdir:
+            if not isinstance(tmpdir, basestring):
+                raise ValueError("tmpdir was %r; expected a string" % (tmpdir,))
             logfile = osutils.pjoin(tmpdir, 'build.log')
+            if not self.set_logfile(logfile):
+                return False
 
-        if not self.set_logfile(logfile):
-            return False
-
-        tail_pid = pkgcore.spawn.spawn(['tail', '-fs1', '-c0', logfile],
-            fd_pipes={1:1}, returnpid=True)[0]
-
+        notify = hasattr(observer, 'start_processing_raw') and logfile
+        if notify:
+            observer.start_processing_raw(logfile)
         try:
-            self.write("start_processing_quiet")
+            if notify:
+                self.write("start_processing_quiet")
+            else:
+                self.write("start_processing")
 
             return self.generic_handler(additional_commands=additional_commands,
                 logfile=logfile)
         finally:
-            try:
-                os.kill(tail_pid, signal.SIGKILL)
-            except OSError, oe:
-                # if the pid doesn't exist, ignore; puke otherwise
-                if oe.errno != errno.ESRCH:
-                    raise
-
-            # reap the dead kiddie.
-            try:
-                os.waitpid(tail_pid, 0)
-            except EnvironmentError:
-                pass
+            if notify:
+                observer.stop_processing_raw()
 
     def sandboxed(self):
         """is this instance sandboxed?"""

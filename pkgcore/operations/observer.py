@@ -10,6 +10,10 @@ from snakeoil import klass
 from snakeoil.demandload import demandload
 demandload(globals(),
     'threading',
+    'pkgcore.spawn:spawn',
+    'os',
+    'signal',
+    'errno',
 )
 
 
@@ -96,6 +100,7 @@ class phase_observer(object):
     def __init__(self, output, semiquiet=True):
         self._output = output
         self._semiquiet = semiquiet
+        self._tail_pid = None
 
     def phase_start(self, phase):
         if not self._semiquiet:
@@ -113,6 +118,32 @@ class phase_observer(object):
     def phase_end(self, phase, status):
         if not self._semiquiet:
             self._output.write("finished %s: %s\n", phase, status)
+
+    def _shutdown_tail(self, raises=True):
+        try:
+            os.kill(self._tail_pid, signal.SIGKILL)
+        except OSError, e:
+            # if the pid doesn't exist, ignore; puke otherwise
+            if oe.errno != errno.ESRCH:
+                if raises:
+                    raise
+
+    def start_processing_raw(self, filepath):
+        self._tail_pid = spawn(['tail', '-fs1', '-c0', filepath],
+            fd_pipes={1:1}, returnpid=True)[0]
+
+    def stop_processing_raw(self):
+        if not self._tail_pid:
+            return
+
+        try:
+            self._shutdown_tail()
+        finally:
+            try:
+                os.waitpid(self._tail_pid, 0)
+            except EnvironmentError:
+                pass
+
 
 # left in place for compatibility sake
 build_observer = phase_observer
