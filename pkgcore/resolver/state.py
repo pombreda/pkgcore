@@ -217,7 +217,7 @@ class replace_op(base_op_state):
         revert_point = plan.current_state
         old = plan.state.get_conflicting_slot(self.pkg)
         # probably should just convert to an add...
-        force_old = bool(plan.state.check_limiters(old))
+        force_old = bool(plan.state.check_blockers(old))
         assert old is not None
         plan.state.remove_slotting(old)
         old_choices = plan.pkg_choices[old]
@@ -304,7 +304,7 @@ class incref_forward_block_op(blocker_base_op):
     def apply(self, plan):
         plan.plan.append(self)
         if self.blocker not in plan.blockers_refcnt:
-            l = plan.state.add_limiter(self.blocker, self.key)
+            l = plan.state.add_blocker(self.blocker, self.key)
         else:
             l = []
         plan.rev_blockers.setdefault(self.choices, []).append(
@@ -319,7 +319,7 @@ class incref_forward_block_op(blocker_base_op):
             del plan.rev_blockers[self.choices]
         plan.blockers_refcnt.remove(self.blocker)
         if self.blocker not in plan.blockers_refcnt:
-            plan.state.remove_limiter(self.blocker, self.key)
+            plan.state.remove_blocker(self.blocker, self.key)
 
 
 class decref_forward_block_op(blocker_base_op):
@@ -330,7 +330,7 @@ class decref_forward_block_op(blocker_base_op):
         plan.plan.append(self)
         plan.blockers_refcnt.remove(self.blocker)
         if self.blocker not in plan.blockers_refcnt:
-            plan.state.remove_limiter(self.blocker, self.key)
+            plan.state.remove_blocker(self.blocker, self.key)
         plan.rev_blockers[self.choices].remove((self.blocker, self.key))
         if not plan.rev_blockers[self.choices]:
             del plan.rev_blockers[self.choices]
@@ -339,5 +339,5 @@ class decref_forward_block_op(blocker_base_op):
         plan.rev_blockers.setdefault(self.choices, []).append(
             (self.blocker, self.key))
         if self.blocker not in plan.blockers_refcnt:
-            plan.state.add_limiter(self.blocker, self.key)
+            plan.state.add_blocker(self.blocker, self.key)
         plan.blockers_refcnt.add(self.blocker)

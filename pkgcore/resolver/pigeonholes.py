@@ -15,7 +15,7 @@ class PigeonHoledSlots(object):
 
     def __init__(self):
         self.slot_dict = {}
-        self.limiters = {}
+        self.blockers = {}
 
     def fill_slotting(self, obj, force=False):
         """Try to insert obj in.
@@ -23,7 +23,7 @@ class PigeonHoledSlots(object):
         :return: any conflicting objs (empty list if inserted successfully).
         """
 
-        l = self.check_limiters(obj)
+        l = self.check_blockers(obj)
 
         key = obj.key
         dslot = obj.slot
@@ -44,7 +44,7 @@ class PigeonHoledSlots(object):
             key = atom.key
         return filter(atom.match, self.slot_dict.get(key, ()))
 
-    def add_limiter(self, atom, key=None):
+    def add_blocker(self, atom, key=None):
         """add a limiter, returning any conflicting objs"""
         if not isinstance(atom, restriction.base):
             raise TypeError("atom must be a restriction.base derivative: "
@@ -53,13 +53,13 @@ class PigeonHoledSlots(object):
 
         if key is None:
             key = atom.key
-        self.limiters.setdefault(key, []).append(atom)
+        self.blockers.setdefault(key, []).append(atom)
         return self.find_atom_matches(atom, key=key)
 
-    def check_limiters(self, obj):
-        """return any limiters conflicting w/ the psased in obj"""
+    def check_blockers(self, obj):
+        """return any blockers conflicting w/ the psased in obj"""
         key = obj.key
-        return [x for x in self.limiters.get(key, ()) if x.match(obj)]
+        return [x for x in self.blockers.get(key, ()) if x.match(obj)]
 
     def remove_slotting(self, obj):
         key = obj.key
@@ -72,18 +72,18 @@ class PigeonHoledSlots(object):
         else:
             del self.slot_dict[key]
 
-    def remove_limiter(self, atom, key=None):
+    def remove_blocker(self, atom, key=None):
         if key is None:
             key = atom.key
-        l = [x for x in self.limiters[key] if x is not atom]
-        if len(l) == len(self.limiters[key]):
+        l = [x for x in self.blockers[key] if x is not atom]
+        if len(l) == len(self.blockers[key]):
             raise KeyError("obj %s isn't slotted" % atom)
         if not l:
-            del self.limiters[key]
+            del self.blockers[key]
         else:
-            self.limiters[key] = l
+            self.blockers[key] = l
 
     def __contains__(self, obj):
         if isinstance(obj, restriction.base):
-            return obj in self.limiters.get(obj.key, ())
+            return obj in self.blockers.get(obj.key, ())
         return obj in self.slot_dict.get(obj.key, ())
