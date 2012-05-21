@@ -48,14 +48,14 @@ class SpawnTest(TempDirMixin, TestCase):
     def test_get_output(self):
         filename = "pkgcore-spawn-getoutput.sh"
         for r, s, text, args in [
-            [0, ["dar\n"], "echo dar\n", {}],
-            [0, ["dar"], "echo -n dar", {}],
-            [1, ["blah\n","dar\n"], "echo blah\necho dar\nexit 1", {}],
-            [0, [], "echo dar 1>&2", {"fd_pipes":{1:1,2:self.null}}]]:
+            [0, "dar\n", "echo dar\n", {}],
+            [0, "dar", "echo -n dar", {}],
+            [1, "blah\ndar\n", "echo blah\necho dar\nexit 1", {}],
+            [0, '', "echo dar 1>&2", {"fd_pipes":{1:1,2:self.null}}]]:
 
             fp = self.generate_script(filename, text)
             self.assertEqual(
-                [r, s],
+                (r, s),
                 spawn.spawn_get_output(fp, spawn_type=spawn.spawn_bash, **args))
 
         os.unlink(fp)
@@ -68,7 +68,7 @@ class SpawnTest(TempDirMixin, TestCase):
         self.assertTrue(ret[1], msg="no output; exit code was %s; script "
             "location %s" % (ret[0], fp))
         self.assertIn("libsandbox.so", [os.path.basename(x.strip()) for x in
-            ret[1][0].split()])
+            ret[1].split()])
         os.unlink(fp)
 
 
@@ -92,7 +92,7 @@ class SpawnTest(TempDirMixin, TestCase):
             os.rmdir(dpath)
             self.assertIn("libsandbox.so", [os.path.basename(x.strip()) for x in
                 spawn.spawn_get_output(
-                fp, spawn_type=spawn.spawn_sandbox, cwd='/')[1][0].split()])
+                fp, spawn_type=spawn.spawn_sandbox, cwd='/')[1].split()])
             os.unlink(fp)
         finally:
             if cwd is not None:
@@ -128,7 +128,7 @@ class SpawnTest(TempDirMixin, TestCase):
 
         savefile = os.path.join(self.dir, "fakeroot-savefile")
         self.assertNotEqual(long(os.stat("/tmp").st_uid), long(nobody_uid))
-        self.assertEqual([0, ["%s\n" % x for x in (nobody_uid, nobody_gid)]],
+        self.assertEqual((0, "%s\n%s\n" % (nobody_uid, nobody_gid)),
             spawn.spawn_get_output([self.bash_path, fp1],
             spawn_type=post_curry(spawn.spawn_fakeroot, savefile), **kw))
         self.assertNotEqual(
@@ -141,7 +141,7 @@ class SpawnTest(TempDirMixin, TestCase):
 
         # yes this is a bit ugly, but fakeroot requires an arg- so we
         # have to curry it
-        self.assertEqual([0, ["%s\n" % x for x in (nobody_uid, nobody_gid)]],
+        self.assertEqual((0, "%s\n%s\n" % (nobody_uid, nobody_gid)),
             spawn.spawn_get_output([fp2],
             spawn_type=post_curry(spawn.spawn_fakeroot, savefile), **kw))
 
@@ -162,24 +162,24 @@ class SpawnTest(TempDirMixin, TestCase):
             raise SkipTest(
                 "can't complete the test, sleep binary doesn't exist")
 
-    def test_spawn_returnpid(self):
-        pid = self.generate_background_pid()
+    def test_spawn_wait(self):
+        p = None
         try:
-            self.assertEqual(
-                None, os.kill(pid, 0),
-                "returned pid was invalid, or sleep died")
-            self.assertEqual(
-                True, pid in spawn.spawned_pids,
-                "pid wasn't recorded in global pids")
+            p = spawn.spawn(['sleep', '60s'], wait=False)
+            os.kill(p.pid, 0)
+            pid = p.pid
+            self.assertTrue(p.returncode is None)
+            p.terminate()
+            # Ensure it doesn't complain if the pid is gone.
+            p.wait()
+            self.assertTrue(p.returncode is not None)
+            p.terminate()
+            p.terminate()
+            self.assertRaises(EnvironmentError, os.kill, pid, signal.SIGTERM)
+            p = None
         finally:
-            os.kill(pid, signal.SIGKILL)
-
-    def test_cleanup_pids(self):
-        pid = self.generate_background_pid()
-        spawn.cleanup_pids([pid])
-        self.assertRaises(OSError, os.kill, pid, 0)
-        self.assertNotIn(
-            pid, spawn.spawned_pids, "pid wasn't removed from global pids")
+            if p:
+                p.kill()
 
     def test_bash(self):
         # bash builtin for true without exec'ing true (eg, no path lookup)
@@ -197,7 +197,7 @@ class SpawnTest(TempDirMixin, TestCase):
             else:
                 desired = 0
             self.assertEqual(str(desired).lstrip("0"),
-                spawn.spawn_get_output(fp)[1][0].strip().lstrip("0"))
+                spawn.spawn_get_output(fp)[1].strip().lstrip("0"))
         finally:
             os.umask(old_um)
 

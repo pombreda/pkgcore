@@ -443,7 +443,7 @@ class InfoRegen(base):
             ret, data = spawn.spawn_get_output(
                 [binary, '--quiet', pjoin(basepath, x),
                     '--dir-file', index],
-                collect_fds=(1,2), split_lines=False)
+                collect_fds=(1,2))
 
             if not data or "already exists" in data or \
                 "warning: no info dir entry" in data:

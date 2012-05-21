@@ -425,14 +425,15 @@ def run_generic_phase(pkg, phase, env, userpriv, sandbox, fakeroot,
     if env is None:
         env = expected_ebuild_env(pkg)
 
-    ebd = request_ebuild_processor(userpriv=userpriv, sandbox=sandbox,
-        fakeroot=fakeroot)
     # this is a bit of a hack; used until ebd accepts observers that handle
     # the output redirection on it's own.  Primary relevance is when
     # stdout/stderr are pointed at a file; we leave buffering on, just
     # force the flush for synchronization.
     sys.stdout.flush()
     sys.stderr.flush()
+
+    ebd = request_ebuild_processor(userpriv=userpriv, sandbox=sandbox,
+        fakeroot=fakeroot)
     try:
         if not ebd.run_phase(phase, env, env.get('T'), sandbox=sandbox,
                        logging=logging,
@@ -626,7 +627,7 @@ class buildable(ebd, setup_mixin, format.build):
         if self.eapi_obj.options.has_KV:
             ret = spawn_get_output(['uname', '-r'])
             if ret[0] == 0:
-                self.env["KV"] = ret[1][0].strip()
+                self.env["KV"] = ret[1].splitlines()[0].strip()
 
         if self.eapi_obj.options.has_merge_type:
             self.env["MERGE_TYPE"] = "source"

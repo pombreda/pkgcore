@@ -27,7 +27,7 @@ class svn_syncer(base.ExternalSyncer):
         if code != 0:
             # should alert the user somehow
             return None
-        for line in data:
+        for line in data.splitlines():
             line = line.strip().split(":", 1)
             if len(line) != 2:
                 continue

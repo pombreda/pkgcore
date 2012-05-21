@@ -39,8 +39,13 @@ except ImportError:
 inactive_ebp_list = []
 active_ebp_list = []
 
-import pkgcore.spawn, os, signal, errno
-from pkgcore import const, os_data
+import atexit
+import errno
+import os
+import signal
+
+import pkgcore
+from pkgcore import const, os_data, spawn
 from pkgcore.ebuild import const as e_const
 
 from snakeoil.currying import post_curry, partial, pretty_docs
@@ -87,7 +92,7 @@ def shutdown_all_processors():
         print e
         raise
 
-pkgcore.spawn.atexit_register(shutdown_all_processors)
+atexit.register(shutdown_all_processors)
 
 @_single_thread_allowed
 def request_ebuild_processor(userpriv=False, sandbox=None, fakeroot=False,
@@ -108,7 +113,7 @@ def request_ebuild_processor(userpriv=False, sandbox=None, fakeroot=False,
     """
 
     if sandbox is None:
-        sandbox = pkgcore.spawn.is_sandbox_capable()
+        sandbox = spawn.is_sandbox_capable()
 
     if not fakeroot:
         for x in inactive_ebp_list:
@@ -232,14 +237,12 @@ class EbuildProcessor(object):
                     "uid":os_data.portage_uid, "gid":os_data.portage_gid,
                     "groups":[os_data.portage_gid]})
         else:
-            if pkgcore.spawn.is_userpriv_capable():
+            if spawn.is_userpriv_capable():
                 spawn_opts.update({"gid":os_data.portage_gid,
                                    "groups":[0, os_data.portage_gid]})
             self.__userpriv = False
 
         # open the pipes to be used for chatting with the new daemon
-        cread, cwrite = os.pipe()
-        dread, dwrite = os.pipe()
         self.__sandbox = False
         self.__fakeroot = False
 
@@ -252,41 +255,43 @@ class EbuildProcessor(object):
 
         args = []
         if sandbox:
-            if not pkgcore.spawn.is_sandbox_capable():
+            if not spawn.is_sandbox_capable():
                 raise ValueError("spawn lacks sandbox capabilities")
             if fakeroot:
                 raise InitializationError('fakeroot was on, but sandbox was also on')
             self.__sandbox = True
-            spawn_func = pkgcore.spawn.spawn_sandbox
+            spawn_func = spawn.spawn_sandbox
 #            env.update({"SANDBOX_DEBUG":"1", "SANDBOX_DEBUG_LOG":"/var/tmp/test"})
 
         elif fakeroot:
-            if not pkgcore.spawn.is_fakeroot_capable():
+            if not spawn.is_fakeroot_capable():
                 raise ValueError("spawn lacks fakeroot capabilities")
             self.__fakeroot = True
-            spawn_func = pkgcore.spawn.spawn_fakeroot
+            spawn_func = spawn.spawn_fakeroot
             args.append(save_file)
         else:
-            spawn_func = pkgcore.spawn.spawn
+            spawn_func = spawn.spawn
 
         # force to a neutral dir so that sandbox/fakeroot won't explode if
         # ran from a nonexistant dir
         spawn_opts["cwd"] = e_const.EAPI_BIN_PATH
         # little trick. we force the pipes to be high up fd wise so
         # nobody stupidly hits 'em.
-        max_fd = min(pkgcore.spawn.max_fd_limit, 1024)
+        max_fd = min(spawn.max_fd_limit, 1024)
+        ebd_w_fd = max_fd - 2
+        ebd_r_fd = max_fd - 1
+
         env.update({
-                "PKGCORE_EBD_READ_FD": str(max_fd -2), "PKGCORE_EBD_WRITE_FD": str(max_fd -1)})
-        self.pid = spawn_func(["/bin/bash", self.ebd, "daemonize"], \
-            fd_pipes={0:0, 1:1, 2:2, max_fd-2:cread, max_fd-1:dwrite}, \
-            returnpid=True, env=env, *args, **spawn_opts)[0]
+                "PKGCORE_EBD_READ_FD": str(ebd_w_fd),
+                "PKGCORE_EBD_WRITE_FD": str(ebd_r_fd)})
 
-        os.close(cread)
-        os.close(dwrite)
-        self.ebd_write = os.fdopen(cwrite, "w")
-        self.ebd_read  = os.fdopen(dread, "r")
+        self.proc = spawn_func(["/bin/bash", self.ebd, "daemonize"],
+            fd_pipes={0:0, 1:1, 2:2,
+                      ebd_w_fd:spawn.PIPE_W("ebd_write", -1),
+                      ebd_r_fd:spawn.PIPE_R("ebd_read", -1)},
+            wait=False, env=env, *args, **spawn_opts)
 
-        # basically a quick "yo" to the daemon
+        # Basically a quick ping of the daemon to ensure it's behaving.
         self.write("dude?")
         if not self.expect("dude!"):
             print "error in server coms, bailing."
@@ -295,7 +300,7 @@ class EbuildProcessor(object):
                 "likely a bug")
         self.write(e_const.EAPI_BIN_PATH)
         # send PKGCORE_PYTHON_BINARY...
-        self.write(pkgcore.spawn.find_invoking_python())
+        self.write(spawn.find_invoking_python())
         self.write(osutils.normpath(osutils.abspath(osutils.join(
                         pkgcore.__file__, os.pardir, os.pardir))))
         if self.__sandbox:
@@ -304,6 +309,9 @@ class EbuildProcessor(object):
         self.dont_export_vars = self.read().split()
         # locking isn't used much, but w/ threading this will matter
         self.unlock()
+
+    ebd_write = klass.alias_attr('proc.ebd_write')
+    ebd_read = klass.alias_attr('proc.ebd_read')
 
     def run_phase(self, phase, env, tmpdir, logging=None,
         additional_commands=None, sandbox=True):
@@ -539,17 +547,8 @@ class EbuildProcessor(object):
         yet it should.
         """
         try:
-            if self.pid is None:
-                return False
-            try:
-                os.kill(self.pid, 0)
-                return True
-            except OSError:
-                # pid is dead.
-                pass
-            self.pid = None
-            return False
-
+            self.proc.poll()
+            return self.proc.returncode is None
         except AttributeError:
             # thrown only if failure occured instantiation.
             return False
@@ -561,23 +560,16 @@ class EbuildProcessor(object):
         try:
             if self.is_alive:
                 self.write("shutdown_daemon", disable_runtime_exceptions=True)
-                self.ebd_write.close()
-                self.ebd_read.close()
-            else:
-                return
+                self.proc.communicate()
+            return
         except (EnvironmentError, ValueError):
-            os.kill(self.pid, signal.SIGTERM)
-
-        # now we wait.
-        try:
-            os.waitpid(self.pid, 0)
-        except KeyboardInterrupt:
-            if not ignore_keyboard_interrupt:
-                raise
+            self.proc.poll()
+            if self.proc.returncode is not None:
+                self.proc.kill()
 
         # currently, this assumes all went well.
         # which isn't always true.
-        self.pid = None
+        self.proc = None
 
     def set_sandbox_state(self, state):
         """

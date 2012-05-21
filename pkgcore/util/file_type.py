@@ -46,7 +46,7 @@ class file_identifier(object):
         if ret != 0:
             raise ValueError("file output was non zero- ret:%r out:%r" %
                 (ret, out))
-        out = ''.join(out)
+        out = out.strip()
         if out.startswith(path):
             out = out[len(path):]
             if out.startswith(":"):
