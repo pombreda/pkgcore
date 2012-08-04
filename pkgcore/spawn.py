@@ -460,6 +460,14 @@ class process(_subprocess.Popen):
         output = dict((k, v[0]) for k, v in collected_data.iteritems())
         return self.returncode, output
 
+    # <py2.6 lacks send_signal/terminate/kill; thus we drop in our own.
+    if not hasattr(_subprocess.Popen, 'terminate'):
+        def terminate(self):
+            self.send_signal(signal.SIGTERM)
+
+        def kill(self):
+            self.send_signal(signal.SIGKILL)
+
     def send_signal(self, sig):
         if self.returncode is None:
             self._internal_send_signal(sig)
