@@ -22,8 +22,9 @@ from pkgcore.const import (
     BASH_BINARY, SANDBOX_BINARY, FAKED_PATH, LIBFAKEROOT_PATH)
 
 from snakeoil.currying import partial
-from snakeoil import klass
+from snakeoil import klass, compatibility
 from snakeoil.osutils import listdir, access
+from snakeoil.fileutils import UnbufferedWriteHandle
 from snakeoil.mappings import ProtectedDict, ImmutableDict
 from snakeoil.process import get_proc_count, find_binary, CommandNotFound, closerange
 from snakeoil import weakrefs
@@ -53,6 +54,7 @@ if original is not None:
 
 del original
 
+
 # Left for compatibility.
 max_fd_limit = _subprocess.MAXFD
 
@@ -62,10 +64,11 @@ class PIPE_W(object):
     __metaclass__ = weakrefs.WeakRefFinalizer
     is_write = True
 
-    def __init__(self, name, buffering=0):
+    def __init__(self, name, buffering=0, raw=False):
         self.name = name
         self.buffering = buffering
         self.child_fd = self.parent_fd = None
+        self.raw = raw
 
     def _create(self):
         if self.child_fd is None:
@@ -102,7 +105,16 @@ class PIPE_W(object):
         mode = 'w'
         if not self.is_write:
             mode = 'r'
-        return os.fdopen(self.parent_fd, mode, self.buffering)
+        if self.raw:
+            mode += 'b'
+        if not compatibility.is_py3k:
+            return os.fdopen(self.parent_fd, mode, self.buffering)
+        elif self.buffering:
+            return os.fdopen(self.parent_fd, mode, self.buffering)
+        f = os.fdopen(self.parent_fd, mode)
+        if self.is_write:
+            f = UnbufferedWriteHandle(f)
+        return f
 
     def alias(self, new_name):
         obj = self.__class__(self, new_name, buffering=self.buffering)
@@ -130,7 +142,19 @@ class _LazyDup(object):
             raise ValueError("Lazy duplication targets must be an integer: %s"
                              % value)
 
+
 class process(_subprocess.Popen):
+
+    try:
+        # >=py3.2 has a c extension, in conjunction w/
+        # http://bugs.python.org/issue6559 that basically screws our intent
+        # here; at some point we'll have to fork subprocess in full (at
+        # least we'll have less insanity to deal w/ when that day comes).
+        import _posixsubprocess
+        del _posixsubprocess
+        _use_close_fds = False
+    except ImportError:
+        _use_close_fds = True
 
     def __init__(self, command, **kwds):
         """wrapper around execve
@@ -151,6 +175,7 @@ class process(_subprocess.Popen):
         elif not hasattr(fd_pipes, 'keys'):
             fd_pipes = dict((idx, val) for (idx, val) in
                             enumerate(fd_pipes) if val != -1)
+
         for key, value in fd_pipes.iteritems():
             if isinstance(value, basestring):
                 fd_pipes[key] = _LazyDup(value)
@@ -162,7 +187,7 @@ class process(_subprocess.Popen):
         # We manually close fds ourselves, but we still need
         # subprocess to invoke this pathway so we can find out what the
         # errpipe's fd is.
-        kwds['close_fds'] = True
+        kwds['close_fds'] = self._use_close_fds
         self._secondary_preexec = kwds.pop('preexec_fn', None)
         kwds['preexec_fn'] = self._forced_preexec_fn
         self._errpipe_fd = None
@@ -277,7 +302,7 @@ class process(_subprocess.Popen):
         fd_pipes = self.fd_pipes.copy()
         self._preexec_pipe_setup(fd_pipes)
 
-        def _find_unused_pid(protected):
+        def _find_unused_fd(protected):
             for potential in itertools.count():
                 if potential not in protected:
                     protected.add(potential)
@@ -289,13 +314,15 @@ class process(_subprocess.Popen):
         # clobber needed fds ({1:2, 2:1}) we first dupe the fds
         # into unused fds.
         targets = set(fd_pipes)
-        targets.add(self._errpipe_fd)
+        if self._errpipe_fd is not None:
+            targets.add(self._errpipe_fd)
         protected = set(targets)
         sources = set(fd_pipes.itervalues())
-        sources.add(self._errpipe_fd)
+        if self._errpipe_fd is not None:
+            sources.add(self._errpipe_fd)
         protected.update(sources)
 
-        fd_source = _find_unused_pid(protected)
+        fd_source = _find_unused_fd(protected)
 
         # It's possible that subprocess's errpipe (for failed exec) is in
         # the way of an fd we want to assign; if so, move it, and monkeypatch
@@ -345,8 +372,10 @@ class process(_subprocess.Popen):
         for trg_fd, lazy_src in lazy_dupes:
             os.dup2(lazy_src.fd, trg_fd)
 
-        # Then close _all_ fds that haven't been explictly
-        # requested to be kept open.
+        # TODO(ferringb): This is redundant- a closerange already ran
+        # (for <py3.2) vi close_fds; this basically is cleaning up
+        # the fd shifting from above.  If the book keeping is
+        # tracked, this should be optional.
         last = 0
         for fd in sorted(targets):
             if fd != last:
