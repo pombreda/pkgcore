@@ -52,8 +52,8 @@ class DataSourceRestriction(values.base):
     __hash__ = object.__hash__
 
 
-dep_like_attrs = ['rdepends', 'depends', 'post_rdepends']
-metadata_attrs = dep_like_attrs
+dep_like_attrs = metadata_attrs = ['rdepends', 'depends', 'post_rdepends']
+dep_like_attrs += ['dependencies']
 dep_like_attrs += list('raw_%s' % x for x in dep_like_attrs) + ['restrict']
 dep_like_attrs = tuple(sorted(dep_like_attrs))
 dep_like_attrs_set = frozenset(dep_like_attrs)
@@ -193,6 +193,45 @@ def _internal_format_depends(out, node, func):
             return True
     else:
         return func(out, node)
+
+
+def _collapse_dependencies(pkg):
+    depends = set(pkg.depends)
+    rdepends = set(pkg.rdepends)
+    pdepends = set(pkg.post_rdepends)
+    result = []
+    def f(*deps, **kwds):
+        build = depends
+        run = rdepends
+        post = pdepends
+        targets = [locals()[x] for x in deps]
+        i = iter(targets)
+        s = set(i.next())
+        text = kwds.get('txt', 'dep:%s' % ','.join(sorted(deps)))
+        for d in i:
+            s = s.intersection(d)
+        if s:
+            for d in targets:
+                d.difference_update(s)
+        if s:
+            payload = tuple(sorted(s, key=lambda x:(x.__class__.__name__, x)))
+            if text:
+                result.append(packages.Conditional('use', values.ContainmentMatch(text), payload))
+            else:
+                result.extend(payload)
+
+    f('build', 'run', 'post')
+    f('build', 'run', txt='')
+    f('run', 'post')
+    f('build', 'post')
+    f('build')
+    f('run')
+    f('post')
+
+    results = conditionals.DepSet(result,
+        pkg.depends.element_class, pkg.depends._node_conds)
+    return results
+
 
 def format_attr(config, out, pkg, attr):
     """Grab a package attr and print it through a formatter."""
@@ -729,6 +768,8 @@ def get_pkg_attr(pkg, attr, fallback=None):
     if attr[0:4] == 'raw_':
         pkg = getattr(pkg, '_raw_pkg', pkg)
         attr = attr[4:]
+    if attr == 'dependencies':
+        return _collapse_dependencies(pkg)
     return getattr(pkg, attr, fallback)
 
 
