@@ -66,7 +66,7 @@ metadata_attrs = tuple(sorted(metadata_attrs))
 
 printable_attrs = dep_like_attrs + metadata_attrs
 printable_attrs += (
-    'md5_cache_savings', 'pms_cache_savings',
+    'md5_cache_savings', 'pms_cache_savings', 'vdb_savings',
     'alldepends', 'raw_alldepends',
     'longdescription', 'herds', 'uris', 'files', 'category', 'package',
     'maintainers', 'repo', 'source_repository', 'path', 'version',
@@ -793,6 +793,16 @@ def get_pkg_attr(pkg, attr, fallback=None):
         if not udeps:
             return '0 bytes'
         return '%s bytes' % (len("".join(l)) - len(udeps),)
+    elif attr == 'vdb_savings':
+        l = []
+        for x in ('depends', 'rdepends', 'post_rdepends'):
+            l.append(str(get_pkg_attr(pkg, x, '')))
+        udeps = str(get_pkg_attr(pkg, 'raw_dependencies', ''))
+        if not udeps:
+            return '0 bytes, 0 file(s)'
+        s = len("".join(l)) - len(udeps)
+        inode_count = len(filter(None, l)) - 1
+        return '%s bytes, %i inodes' % (s, inode_count)
     return getattr(pkg, attr, fallback)
 
 
