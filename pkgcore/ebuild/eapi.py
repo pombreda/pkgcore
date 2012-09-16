@@ -21,7 +21,8 @@ eapi_optionals = mappings.ImmutableDict({
     "src_uri_renames":False,
     "has_required_use":False,
     "has_AA":False,
-    "has_KV":False
+    "has_KV":False,
+    "unified_dependencies":False,
 })
 
 

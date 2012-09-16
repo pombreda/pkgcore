@@ -55,7 +55,7 @@ class DepSet(boolean.AndRestriction):
     def parse(cls, dep_str, element_class, \
         operators=None,
         element_func=None, transitive_use_atoms=False,
-        allow_src_uri_file_renames=False):
+        allow_src_uri_file_renames=False, allow_dependencies=False):
 
         """
         :param dep_str: string abiding by DepSet syntax
@@ -66,6 +66,7 @@ class DepSet(boolean.AndRestriction):
             Mainly useful for when you need to curry a few args for instance
             generation, since element_class _must_ be a class
         :param element_class: class of generated elements
+        :param allow_dependencies: If True, allow unified dependencies.
         """
 
         if not isinstance(element_class, type):
@@ -118,14 +119,27 @@ class DepSet(boolean.AndRestriction):
                         raise ParseError(dep_str)
                     elif raw_conditionals[-1].endswith('?'):
                         node_conds = True
-                        c = raw_conditionals[-1]
-                        if c[0] == "!":
-                            c = values.ContainmentMatch(c[1:-1], negate=True)
+                        c = raw_conditionals[-1][:-1]
+                        negate = c[0] == '!'
+                        if negate:
+                            c = c[1:]
+                        if c.startswith("dep:") and allow_dependencies:
+                            targets = set(c[4:].split(','))
+                            if not targets:
+                                raise ParseError(dep_str, token=raw_conditionals[-1],
+                                                 msg="no dependency mode specified")
+                            elif targets.difference(['build', 'run', 'post']):
+                                raise ParseError(dep_str, token=raw_conditionals[-1],
+                                                 msg="unknown dependency mode specified.")
+                            targets = ['dep:%s' % x for x in sorted(targets)]
                         else:
-                            c = values.ContainmentMatch(c[:-1])
+                            targets = [c]
 
-                        depsets[-2].append(
-                            packages.Conditional("use", c, tuple(depsets[-1])))
+                        payload = tuple(depsets[-1])
+                        depsets[-2].extend(
+                            packages.Conditional(
+                                "use", values.ContainmentMatch(flag, negate=negate), payload)
+                            for flag in targets)
 
                     else:
                         if len(depsets[-1]) == 1:
@@ -194,6 +208,22 @@ class DepSet(boolean.AndRestriction):
         if len(depsets) != 1:
             raise ParseError(dep_str)
 
+        if allow_dependencies and restrictions:
+            # Do a scan of the top level restrictions, wrapping anything that isn't
+            # a dep: package conditional.
+            node_conds = True
+            pred_list = [
+                (isinstance(x, packages.Conditional) and
+                 list(x.restriction.vals)[0][:4] == 'dep:',
+                 x)
+                for x in restrictions]
+            restrictions = [x[1] for x in pred_list if x[0]]
+            bare = tuple(x[1] for x in pred_list if not x[0])
+            if bare:
+                restrictions.extend(
+                    packages.Conditional('use', values.ContainmentMatch(mode), bare)
+                    for mode in ('dep:build', 'dep:run'))
+
         if transitive_use_atoms and not node_conds:
             # localize to this scope for speed.
             element_class = transitive_use_atom
@@ -208,6 +238,14 @@ class DepSet(boolean.AndRestriction):
         kls = transitive_use_atom
         ifunc = isinstance
         return any(ifunc(x, kls) for x in iflatten_instance(iterable, atom))
+
+    def _evaluate_depset_for_pkg(self, pkg, rendering_for, cond_dict):
+        if pkg.eapi_obj.unified_depencencies:
+            # XXX: Hackish.
+            if rendering_for in ('depends', 'rdepends', 'post_rdepends'):
+                cond_dict = set(cond_dict)
+                cond_dict.add('dep:%s' % render_for)
+        return self.evaluate_depset(cond_dict)
 
     def evaluate_depset(self, cond_dict, tristate_filter=None):
         """

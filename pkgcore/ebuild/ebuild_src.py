@@ -43,6 +43,11 @@ def generate_depset(c, key, non_package_type, s, **kwds):
     eapi_obj = s.eapi_obj
     if eapi_obj is None:
         raise metadata_errors.MetadataException(s, "eapi", "unsupported eapi")
+    if eapi_obj.options.unified_dependencies:
+        if not key == 'dependencies':
+            return s.dependencies
+        key = 'dependencies'
+        kwds['allow_dependencies'] = True
     kwds['element_func'] = eapi_obj.atom_kls
     kwds['transitive_use_atoms'] = eapi_obj.options.transitive_use_atoms
     return conditionals.DepSet.parse(s.data.pop(key, ""), c, **kwds)
@@ -178,7 +183,7 @@ class base(metadata.package):
         "depends", "rdepends", "post_rdepends", "provides", "license",
         "slot", "keywords", "eapi_obj", "restrict", "description", "iuse",
         "chost", "cbuild", "ctarget", "homepage", "properties", "inherited",
-        "defined_phases", "source_repository")
+        "defined_phases", "source_repository", "dependencies")
 
     _config_wrappables = dict((x, alias_class_method("evaluate_depset"))
         for x in ["depends", "rdepends", "post_rdepends", "fetchables",
@@ -187,6 +192,7 @@ class base(metadata.package):
 
     _get_attr = dict(metadata.package._get_attr)
     _get_attr["provides"] = generate_providers
+    _get_attr['dependencies'] = partial(generate_depset, atom, 'DEPENDENCIES', False)
     _get_attr["depends"] = partial(generate_depset, atom, "DEPEND", False)
     _get_attr["rdepends"] = partial(generate_depset, atom, "RDEPEND", False)
     _get_attr["post_rdepends"] = partial(generate_depset, atom, "PDEPEND",
