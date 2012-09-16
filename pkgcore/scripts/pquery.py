@@ -66,6 +66,7 @@ metadata_attrs = tuple(sorted(metadata_attrs))
 
 printable_attrs = dep_like_attrs + metadata_attrs
 printable_attrs += (
+    'md5_cache_savings', 'pms_cache_savings',
     'alldepends', 'raw_alldepends',
     'longdescription', 'herds', 'uris', 'files', 'category', 'package',
     'maintainers', 'repo', 'source_repository', 'path', 'version',
@@ -770,6 +771,28 @@ def get_pkg_attr(pkg, attr, fallback=None):
         attr = attr[4:]
     if attr == 'dependencies':
         return _collapse_dependencies(pkg)
+    elif attr == 'md5_cache_savings':
+        l = []
+        for x in ('depends', 'rdepends', 'post_rdepends'):
+            v = str(get_pkg_attr(pkg, 'raw_%s' % x, ''))
+            if v:
+                l.append("%s=%s" % (
+                    {'depends':'DEPEND', 'rdepends':'RDEPEND', 'post_rdepends':'PDEPEND'}[x],
+                    v))
+        udeps = str(get_pkg_attr(pkg, 'raw_dependencies', ''))
+        if not udeps:
+            return '0 bytes'
+        udeps = 'DEPENDENCIES=%s' % udeps
+        return '%s bytes' % (len("\n".join(l)) - len(udeps),)
+    elif attr == 'pms_cache_savings':
+        l = []
+        for x in ('depends', 'rdepends', 'post_rdepends'):
+            v = str(get_pkg_attr(pkg, 'raw_%s' % x, ''))
+            l.append(v)
+        udeps = str(get_pkg_attr(pkg, 'raw_dependencies', '')) + "\n"
+        if not udeps:
+            return '0 bytes'
+        return '%s bytes' % (len("".join(l)) - len(udeps),)
     return getattr(pkg, attr, fallback)
 
 
