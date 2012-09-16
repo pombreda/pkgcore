@@ -69,6 +69,9 @@ _empty_fetchable = conditionals.DepSet.parse('', ebuild_src.fetchable,
 def _get_inherited(self):
     return tuple(sorted(self.data.get("INHERITED", "").split()))
 
+def _get_depset(self, mode):
+    return self.dependencies.evaluate_depset(['dep:' + mode])
+
 class package(ebuild_src.base):
 
     """
@@ -110,6 +113,10 @@ class package(ebuild_src.base):
         lambda: frozenset(s.data["USE"].split()))
 
     _get_attr["inherited"] = _get_inherited
+
+    _get_attr['depends'] = post_curry(_get_depset, 'build')
+    _get_attr['rdepends'] = post_curry(_get_depset, 'run')
+    _get_attr['post_rdepends'] = post_curry(_get_depset,' post')
 
     def _chost_fallback(initial, self):
         o = self.data.get(initial)

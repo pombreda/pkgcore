@@ -47,7 +47,7 @@ def generate_depset(c, key, non_package_type, s, **kwds):
         if not key == 'dependencies':
             return s.dependencies
         key = 'dependencies'
-        kwds['allow_dependencies'] = True
+    kwds['allow_dependencies'] = True
     kwds['element_func'] = eapi_obj.atom_kls
     kwds['transitive_use_atoms'] = eapi_obj.options.transitive_use_atoms
     return conditionals.DepSet.parse(s.data.pop(key, ""), c, **kwds)

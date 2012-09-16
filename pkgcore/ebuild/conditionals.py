@@ -240,7 +240,7 @@ class DepSet(boolean.AndRestriction):
         return any(ifunc(x, kls) for x in iflatten_instance(iterable, atom))
 
     def _evaluate_depset_for_pkg(self, pkg, rendering_for, cond_dict):
-        if pkg.eapi_obj.unified_depencencies:
+        if pkg.eapi_obj.unified_depencencies or True:
             # XXX: Hackish.
             if rendering_for in ('depends', 'rdepends', 'post_rdepends'):
                 cond_dict = set(cond_dict)
