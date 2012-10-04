@@ -4,7 +4,7 @@
 """
 binpkg tar utilities
 """
-import os, stat
+import os, stat, itertools
 from pkgcore.fs.fs import fsFile, fsDir, fsSymlink, fsFifo, fsDev
 from pkgcore.fs import contents
 from snakeoil.data_source import invokable_data_source
@@ -13,6 +13,9 @@ from snakeoil.tar import tarfile
 from snakeoil import compression
 from snakeoil.currying import partial
 from snakeoil.compatibility import cmp, sorted_cmp
+
+
+_unique_inode = itertools.count(2**32).next
 
 
 known_compressors = {"bz2": tarfile.TarFile.bz2open,
@@ -45,16 +48,30 @@ def add_contents_to_tarfile(contents_set, tar_fd, absolute_paths=False):
     for x in dirs:
         tar_fd.addfile(fsobj_to_tarinfo(x, absolute_paths))
     del dirs
+    inodes = {}
     for x in contents_set.iterdirs(invert=True):
         t = fsobj_to_tarinfo(x, absolute_paths)
         if t.isreg():
-            tar_fd.addfile(t, fileobj=x.data.bytes_fileobj())
+            key = (x.dev, x.inode)
+            existing = inodes.get(key)
+            data = None
+            if existing is not None:
+                if x._can_be_hardlinked(existing):
+                    t.type = tarfile.LNKTYPE
+                    t.linkname = existing.location
+                    t.size = 0L
+            else:
+                inodes[key] = x
+                data = x.data.bytes_fileobj()
+            tar_fd.addfile(t, fileobj=data)
         else:
             tar_fd.addfile(t)
 
 
 def archive_to_fsobj(src_tar):
     psep = os.path.sep
+    dev = _unique_inode()
+    inodes = {}
     for member in src_tar:
         d = {
             "uid":member.uid, "gid":member.gid,
@@ -64,13 +81,17 @@ def archive_to_fsobj(src_tar):
             if member.name.strip(psep) == ".":
                 continue
             yield fsDir(location, **d)
-        elif member.isreg():
+        elif member.isreg() or member.islnk():
+            name = member.name
+            d["dev"] = dev
+            if member.islnk():
+                name = member.linktarget
+
+            else:
+                d["inode"] = _unique_inode()
             d["data"] = invokable_data_source.wrap_function(partial(
                     src_tar.extractfile, member.name), returns_text=False,
                     returns_handle=True)
-            # suppress hardlinks until the rest of pkgcore is updated for it.
-            d["dev"] = None
-            d["inode"] = None
             yield fsFile(location, **d)
         elif member.issym() or member.islnk():
             yield fsSymlink(location, member.linkname, **d)
